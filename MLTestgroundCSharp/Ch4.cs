@@ -161,6 +161,9 @@ namespace MLEx {
             }
         }
 
+        /// <summary>
+        /// 基尼值
+        /// </summary>
         static double Gini(List<Vector<double>> data) {
             Dictionary<double, int> counts = new();
             foreach (var d in data)
@@ -175,6 +178,9 @@ namespace MLEx {
             return 1-sum;
         }
 
+        /// <summary>
+        /// 基尼系数
+        /// </summary>
         static double GiniIndex(List<Vector<double>> data, int attr) {
             uint selCnt = discreteCount3[attr];
             if (selCnt != Continuous) {  // for discrete attribute
@@ -225,6 +231,7 @@ namespace MLEx {
         public static Node TreeGenerate(List<Vector<double>> data, HashSet<int> attrs, PurityAlgorithm purAlgo) {
             Node n = new();
             bool flag = false;
+            // 若当前节点包含的样本全属于同一类别，则无需划分，作叶节点
             for (int i = 1; i < data.Count; ++i) {
                 if (!FEq(data[i - 1].Last(), data[i].Last())) {
                     flag = true;
@@ -236,21 +243,23 @@ namespace MLEx {
                 n.result = data[0].Last();
                 return n;
             }
+            // 当前属性集为空，或所有样本再属性集上取值相同，作叶节点
             if (attrs.Count == 0 || SameOnSpecifiedAttrSet(data, attrs)) {
                 n.isLeaf = true;
                 n.result = ClassHavingMostSamples(data);
                 return n;
             }
+            // 需要划分的情形
             n.isLeaf = false;
             n.assocAttr = OptimaizedDividingAttr(data, attrs, purAlgo);
             HashSet<int> newAttrSet = attrs;
             newAttrSet.Remove(n.assocAttr);
             uint selCnt = discreteCount3[n.assocAttr];
-            if (selCnt != Continuous) {
+            if (selCnt != Continuous) { // 离散值情况，依据图2算法
                 for (int i = 0; i < selCnt; ++i) {
                     double v = Math.Round((double)i / (selCnt - 1), 6);
                     var division = DataWhoseAttrIs(data, n.assocAttr, v);
-                    if (division.Count == 0) {
+                    if (division.Count == 0) {  // 若当前划分条件下划分不出样本
                         Node child = new();
                         child.isLeaf = true;
                         child.result = ClassHavingMostSamples(data);
@@ -259,7 +268,7 @@ namespace MLEx {
                         n.children.Add(new(Node.Op.Equal, v, TreeGenerate(division, newAttrSet, purAlgo)));
                     }
                 }
-            } else {
+            } else { // 连续值情况，依据4.4.1描述的算法
                 double divPnt = OptDivPntAndContinuousGain(data, n.assocAttr).Item1;
                 var division = DivideDataByAttrAtPoint(data, n.assocAttr, divPnt);
                 n.children.Add(new(Node.Op.Less, divPnt, TreeGenerate(division.Item1, newAttrSet, purAlgo)));
