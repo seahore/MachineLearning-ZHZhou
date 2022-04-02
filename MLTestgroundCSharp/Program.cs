@@ -7,9 +7,9 @@ foreach (var d in Ch4.defaultData2Test) {
 }
 */
 
-Ch5.BPNetwork net = new Ch5.BPNetwork(new int[] { 8, 8, 3, 1 });
-// net.BP(Ch5.defaultData3, 0.01, 1000000);
-net.AccumulatedBP(Ch5.defaultData3, 0.01, 1000000);
+Ch5.BPNetwork net = new Ch5.BPNetwork(new int[] { 8, 4, 1 });
+// net.BGD(Ch5.defaultData3, 0.001, 500000);
+net.Adam(Ch5.defaultData3, 0.001, 0.9, 0.999, 1000);
 
 foreach (var s in Ch5.defaultData3) {
     var output = net.Evaluate(s.Input);

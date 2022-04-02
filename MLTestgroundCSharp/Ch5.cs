@@ -71,9 +71,10 @@ namespace MLEx {
             public Vector<double>[] Thresholds => _thresholds;
             Vector<double>[] _thresholds;
 
-            double Sigmoid(double x) => 1 / (1 + Math.Exp(-x));
-            Vector<double> SigmoidVec(Vector<double> v) => vb.Dense(v.Select(x => Sigmoid(x)).ToArray());
-            double dSigmoid(double x) => Math.Exp(-x) / Math.Pow(1 + Math.Exp(-x), 2);
+            delegate double ActivationFunc(double x);
+            static Vector<double> ApplyToVec(ActivationFunc f, Vector<double> v) => vb.Dense(v.Select(x => f(x)).ToArray());
+            static double Sigmoid(double x) => 1.0 / (1.0 + Math.Exp(-x));
+            double dSigmoid(double x) => Math.Exp(-x) / Math.Pow(1.0 + Math.Exp(-x), 2);
 
             public BPNetwork(int[] neurons, Matrix<double>[]? w = null, Vector<double>[]? th = null) {
                 _rand = new Random();
@@ -82,10 +83,10 @@ namespace MLEx {
                 else {
                     _weights = new Matrix<double>[LayersCount - 1];
                     for (int l = 0; l < LayersCount - 1; ++l) {
-                        _weights[l] = mb.Dense(_neuronsCnt[l+1], _neuronsCnt[l]);
+                        _weights[l] = mb.Dense(_neuronsCnt[l + 1], _neuronsCnt[l]);
                         for (int i = 0; i < _neuronsCnt[l + 1]; ++i)
                             for (int j = 0; j < _neuronsCnt[l]; j++)
-                                _weights[l][i,j] = _rand.NextDouble();
+                                _weights[l][i, j] = _rand.NextDouble()*2.0 - 1.0;
                     }
                 }
                 if (th is not null) _thresholds = th;
@@ -94,36 +95,39 @@ namespace MLEx {
                     for (int l = 1; l < LayersCount; ++l) {
                         _thresholds[l] = vb.Dense(_neuronsCnt[l]);
                         for (int i = 0; i < _neuronsCnt[l]; i++)
-                            _thresholds[l][i] = _rand.NextDouble();
+                            _thresholds[l][i] = _rand.NextDouble()*2.0 - 1.0;
                     }
                 }
             }
 
+            Vector<double>[] GradOfEachLayer(Sample sample, Vector<double>[] outputs) {
+                Vector<double>[] grad = new Vector<double>[LayersCount];
+                for (int l = 0; l < LayersCount; ++l)
+                    grad[l] = vb.Dense(_neuronsCnt[l]);
+                // 计算输出层的梯度
+                // g_out = yHat ⊙ (ones - yHat) ⊙ (y - yHat) = diag(yHat) diag(ones - yHat) (y - yHat)
+                grad[^1] = mb.Diagonal(outputs[^1].ToArray()) * mb.Diagonal((vb.Dense(_neuronsCnt[^1], 1.0) - outputs[^1]).ToArray()) * (vb.Dense(sample.ExpectedOutput.ToArray()) - outputs[^1]);
+                // 依次计算输出以下层的梯度
+                // g_l = diag(o_l) diag(ones - o_l) W^T g_{l+1}
+                for (int l = LayersCount - 2; l >= 0; --l)
+                    grad[l] = mb.Diagonal(outputs[l].ToArray()) * mb.Diagonal((vb.Dense(_neuronsCnt[l], 1.0) - outputs[l]).ToArray()) * _weights[l].Transpose() * grad[l + 1];
+                return grad;
+            }
+
             /// <summary>
-            /// 用标准误差逆传播算法训练神经网络
+            /// 用随机梯度下降（标准误差逆传播）算法训练神经网络
             /// </summary>
-            public void BP(IEnumerable<Sample> samples, double learningRate, int epoch) {
+            public void SGD(IEnumerable<Sample> samples, double learningRate, int epoch) {
                 foreach (var s in samples) {
                     if (s.Input.Count != InputDim) throw new ArgumentException("某个样本的输入向量维数和输入层神经元数不一致。", nameof(samples));
                     if (s.ExpectedOutput.Count != OutputDim) throw new ArgumentException("某个样本的预期输出向量的维数和输出层神经元数不一致。", nameof(samples));
                 }
-                for (int e = 0; e < epoch; ++e) {
+                for (int t = 0; t < epoch; ++t) {
                     samples = RandomSort(samples);
                     foreach (var s in samples) {
                         // 获取每层输出，当然也包含最后的输出
                         var outputs = EvaluateAndGetEachLayersOutput(s.Input);
-                        Vector<double>[] grad = new Vector<double>[LayersCount];
-                        for (int l = 0; l < LayersCount; ++l)
-                            grad[l] = vb.Dense(_neuronsCnt[l]);
-                        // 计算输出层的梯度
-                        // g_out = diag(yHat) diag(ones - yHat) (y - yHat)
-                        grad[^1] = mb.Diagonal(outputs[^1].ToArray()) * mb.Diagonal((vb.Dense(_neuronsCnt[^1], 1.0) - outputs[^1]).ToArray()) * (vb.Dense(s.ExpectedOutput.ToArray()) - outputs[^1]);
-                        for (int i = 0; i < OutputDim; ++i)
-                            grad[^1][i] = outputs[^1][i] * (1 - outputs[^1][i]) * (s.ExpectedOutput[i] - outputs[^1][i]);
-                        // 依次计算输出以下层的梯度
-                        // g_l = diag(o_l) diag(ones - o_l) W^T g_{l+1}
-                        for (int l = LayersCount - 2; l >= 0; --l)
-                            grad[l] = mb.Diagonal(outputs[l].ToArray()) * mb.Diagonal((vb.Dense(_neuronsCnt[l], 1.0) - outputs[l]).ToArray()) * _weights[l].Transpose() * grad[l+1];
+                        Vector<double>[] grad = GradOfEachLayer(s, outputs);
                         // 更新权重
                         // W_l = W_l + η g_{l+1} o_l^T
                         for (int l = 0; l < LayersCount - 1; ++l)
@@ -131,35 +135,30 @@ namespace MLEx {
                         // 更新阈值
                         // θ_l = θ_l + η g_l
                         for (int l = 1; l < LayersCount; ++l)
-                             _thresholds[l] -= learningRate * grad[l];
+                            _thresholds[l] -= learningRate * grad[l];
                     }
                 }
             }
 
             /// <summary>
-            /// 用累积误差逆传播算法训练神经网络
+            /// 用批量梯度下降（累积误差逆传播）算法训练神经网络
             /// </summary>
-            public void AccumulatedBP(IEnumerable<Sample> samples, double learningRate, int epoch) {
+            public void BGD(IEnumerable<Sample> samples, double learningRate, int epoch) {
                 foreach (var s in samples) {
                     if (s.Input.Count != InputDim) throw new ArgumentException("某个样本的输入向量维数和输入层神经元数不一致。", nameof(samples));
                     if (s.ExpectedOutput.Count != OutputDim) throw new ArgumentException("某个样本的预期输出向量的维数和输出层神经元数不一致。", nameof(samples));
                 }
 
-                for (int e = 0; e < epoch; ++e) {
-                    Matrix<double>[] sumForWeights = new Matrix<double>[LayersCount-1];
-                    for(int l = 0; l<LayersCount-1; ++l) 
-                         sumForWeights[l] = mb.Dense(_neuronsCnt[l+1], _neuronsCnt[l], 0.0);
+                for (int t = 0; t < epoch; ++t) {
+                    Matrix<double>[] sumForWeights = new Matrix<double>[LayersCount - 1];
+                    for (int l = 0; l < LayersCount - 1; ++l)
+                        sumForWeights[l] = mb.Dense(_neuronsCnt[l + 1], _neuronsCnt[l], 0.0);
                     Vector<double>[] sumForThreshold = new Vector<double>[LayersCount];
                     for (int l = 1; l < LayersCount; ++l)
                         sumForThreshold[l] = vb.Dense(_neuronsCnt[l], 0.0);
                     foreach (var s in samples) {
-                        Vector<double>[] grad = new Vector<double>[LayersCount];
-                        for (int l = 0; l < LayersCount; ++l)
-                            grad[l] = vb.Dense(_neuronsCnt[l]);
                         var outputs = EvaluateAndGetEachLayersOutput(s.Input);
-                        grad[^1] = mb.Diagonal(outputs[^1].ToArray()) * mb.Diagonal((vb.Dense(_neuronsCnt[^1], 1.0) - outputs[^1]).ToArray()) * (vb.Dense(s.ExpectedOutput.ToArray()) - outputs[^1]);
-                        for (int l = LayersCount - 2; l >= 0; --l)
-                            grad[l] = mb.Diagonal(outputs[l].ToArray()) * mb.Diagonal((vb.Dense(_neuronsCnt[l], 1.0) - outputs[l]).ToArray()) * _weights[l].Transpose() * grad[l + 1];
+                        Vector<double>[] grad = GradOfEachLayer(s, outputs);
                         // 累加上层梯度和输出的积，供更新权重用
                         for (int l = 0; l < LayersCount - 1; ++l)
                             sumForWeights[l] += grad[l + 1].ToColumnMatrix() * outputs[l].ToRowMatrix();
@@ -169,13 +168,13 @@ namespace MLEx {
                     }
                     // 利用累加的梯度和输出的积，更新权重
                     for (int l = 0; l < LayersCount - 1; ++l)
-                         _weights[l] += sumForWeights[l] * learningRate / samples.Count();
+                        _weights[l] += sumForWeights[l] * learningRate / samples.Count();
                     // 利用累加的梯度，更新阈值
                     for (int l = 1; l < LayersCount; ++l)
                         _thresholds[l] -= sumForThreshold[l] * learningRate / samples.Count();
                 }
             }
-            
+
             /// <summary>
             /// 讲向量输入当前神经网络计算一个输出
             /// </summary>
@@ -184,7 +183,7 @@ namespace MLEx {
                     throw new ArgumentException("输入向量维数和输入层神经元数不一致。", nameof(input));
                 Vector<double> layerInput = vb.Dense(input.ToArray()), layerOutput;
                 for (int l = 0; l < LayersCount - 1; ++l) {
-                    layerOutput = SigmoidVec(_weights[l] * layerInput - _thresholds[l + 1]);
+                    layerOutput = ApplyToVec(Sigmoid, _weights[l] * layerInput - _thresholds[l + 1]);
                     layerInput = layerOutput;
                 }
                 return layerInput;
@@ -201,8 +200,62 @@ namespace MLEx {
                 for (int l = 1; l < LayersCount; ++l)
                     layerOutputs[l] = vb.Dense(_neuronsCnt[l]);
                 for (int l = 0; l < LayersCount - 1; ++l)
-                    layerOutputs[l + 1] = SigmoidVec(_weights[l] * layerOutputs[l] - _thresholds[l + 1]);
+                    layerOutputs[l + 1] = ApplyToVec(Sigmoid, _weights[l] * layerOutputs[l] - _thresholds[l + 1]);
                 return layerOutputs;
+            }
+
+            /// <summary>
+            /// Adam 算法
+            /// </summary>
+            public void Adam(IEnumerable<Sample> samples, double learningRate, double beta1, double beta2, int epoch, double epsilon = 1E-8) {
+                if (beta1 < 0 || beta1 >= 1) throw new ArgumentException("系数β1不在[0,1)范围", nameof(beta1));
+                if (beta2 < 0 || beta2 >= 1) throw new ArgumentException("系数β2不在[0,1)范围", nameof(beta2));
+                foreach (var s in samples) {
+                    if (s.Input.Count != InputDim) throw new ArgumentException("某个样本的输入向量维数和输入层神经元数不一致。", nameof(samples));
+                    if (s.ExpectedOutput.Count != OutputDim) throw new ArgumentException("某个样本的预期输出向量的维数和输出层神经元数不一致。", nameof(samples));
+                }
+                Matrix<double>[] meanOnW = new Matrix<double>[LayersCount - 1];
+                Matrix<double>[] varianceOnW = new Matrix<double>[LayersCount - 1];
+                Vector<double>[] meanOnTheta = new Vector<double>[LayersCount];
+                Vector<double>[] varianceOnTheta = new Vector<double>[LayersCount]; 
+                for (int l = 0; l < LayersCount - 1; ++l) {
+                    meanOnW[l] = mb.Dense(_neuronsCnt[l + 1], _neuronsCnt[l], 0.0);
+                    varianceOnW[l] = mb.Dense(_neuronsCnt[l + 1], _neuronsCnt[l], 0.0);
+                }
+                for (int l = 1; l < LayersCount; ++l) {
+                    meanOnTheta[l] = vb.Dense(_neuronsCnt[l], 0.0);
+                    varianceOnTheta[l] = vb.Dense(_neuronsCnt[l], 0.0);
+                }
+
+                for (int t = 1; t <= epoch; ++t) {  // 因为要以t为指数计算误差修正的两个beta参数所以从1开始，参考原文献
+                    Vector<double>[] grad = new Vector<double>[LayersCount];
+                    for (int l = 0; l < LayersCount; ++l)
+                        grad[l] = vb.Dense(_neuronsCnt[l], 0.0);
+                    foreach (var s in samples) {
+                        var outputs = EvaluateAndGetEachLayersOutput(s.Input);
+                        for (int l = 0; l < LayersCount; ++l)
+                            grad[l] += GradOfEachLayer(s, outputs)[l] / samples.Count();  // batch
+                    }
+                    double newLR = learningRate * Math.Sqrt(1.0 - Math.Pow(beta2, t)) / (1.0 - Math.Pow(beta1, t));
+                    // Update weights
+                    for (int l = 0; l < LayersCount - 1; ++l) {
+                        for (int i = 0; i < _neuronsCnt[l]; ++i) {
+                            for (int j = 0; j < _neuronsCnt[l + 1]; ++j) {
+                                meanOnW[l][j, i] = beta1 * meanOnW[l][j, i] + (1.0 - beta1) * grad[l + 1][j];
+                                varianceOnW[l][j, i] = beta2 * varianceOnW[l][j, i] + (1.0 - beta2) * grad[l + 1][j] * grad[l + 1][j];
+                            }
+                        }
+                        for (int i = 0; i < _neuronsCnt[l]; ++i)
+                            for (int j = 0; j < _neuronsCnt[l + 1]; ++j)
+                                _weights[l][j, i] -= newLR * meanOnW[l][j, i] / (Math.Sqrt(varianceOnW[l][j, i]) + epsilon);
+                    }
+                    // Update thresholds
+                    for (int l = 1; l < LayersCount; ++l) {
+                        meanOnTheta[l] = beta1 * meanOnTheta[l] + (1.0 - beta1) * grad[l];
+                        varianceOnTheta[l] = beta2 * varianceOnTheta[l] + (1.0 - beta2) * mb.Diagonal(grad[l].ToArray()) * grad[l];
+                        _thresholds[l] -= newLR * mb.Diagonal(meanOnTheta[l].ToArray()) * vb.Dense(varianceOnTheta[l].Select(x => 1.0 / (Math.Sqrt(x) + epsilon)).ToArray());
+                    }
+                }
             }
         }
     }
