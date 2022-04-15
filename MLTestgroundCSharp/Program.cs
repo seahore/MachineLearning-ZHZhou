@@ -27,7 +27,11 @@ foreach (var s in Ch5.defaultData3) {
 }
 */
 
+/*
 for (int i = 0; i < Ch7.defaultData3.Count; ++i) {
     var res = Ch7.AODE(Ch7.defaultData3, Ch7.defaultData3[i].SubVector(0, Ch7.defaultData3[i].Count - 1), Ch7.discreteCount3);
     Console.WriteLine($"Result {i+1}: {res}");
 }
+*/
+
+var c = Ch9.KMeans(Ch9.defaultData4, 3, 0.001);
