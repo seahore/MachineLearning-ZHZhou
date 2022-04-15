@@ -39,13 +39,15 @@ namespace MLEx {
         };
 
         /// <summary>
-        /// 使用 k 均值算法进行聚类
+        /// 给定簇划分的数目（即 k 值），使用 k 均值算法进行聚类
         /// </summary>
         /// <param name="data">样本集</param>
         /// <param name="k">聚类数</param>
         /// <param name="threshold">在计算新均值向量的环节中，每个均值向量移动的距离之和小于何值，则停止</param>
         /// <returns>包含 k 个簇的簇划分</returns>
-        public static List<Vector<double>>[] KMeans(List<Vector<double>> data, int k, double threshold) {
+        public static List<Vector<double>>[] KMeans(List<Vector<double>> data, int k, double threshold) => KMeansGetClustersAndMeans(data, k, threshold).Item1;
+
+        public static Tuple<List<Vector<double>>[], Vector<double>[]> KMeansGetClustersAndMeans(List<Vector<double>> data, int k, double threshold) {
             List<Vector<double>>[] clusters;
             Vector<double>[] means = new Vector<double>[k];
 
@@ -75,19 +77,76 @@ namespace MLEx {
                 Vector<double>[] newMeans = new Vector<double>[k];
                 for (int i = 0; i < k; ++i) {
                     newMeans[i] = vb.Dense(data[0].Count, 0.0);
-                    foreach(var x in clusters[i])
-                        newMeans[i] += x/clusters[i].Count;
+                    foreach (var x in clusters[i])
+                        newMeans[i] += x / clusters[i].Count;
                 }
 
                 double sumOfDist = 0;
                 for (int i = 0; i < k; ++i)
                     sumOfDist += (newMeans[i] - means[i]).L2Norm();
+                means = newMeans;
                 if (sumOfDist < threshold)
                     break;
-                means = newMeans;
             }
 
-            return clusters;
+            return new(clusters, means);
         }
+
+        /// <summary>
+        /// 计算轮廓系数，分析簇划分的散度
+        /// </summary>
+        /// <param name="clusters">簇划分</param>
+        /// <param name="means">各个簇的均值向量</param>
+        /// <returns>轮廓系数</returns>
+        static double SilhouetteCoefficient(List<Vector<double>>[] clusters, Vector<double>[] means) {
+            int dataCount = clusters.Sum(x => x.Count);
+            double result = 0;
+            for (int i = 0; i < clusters.Length; ++i) {
+                foreach (var x in clusters[i]) {
+                    double a = 0;
+                    foreach (var xPrime in clusters[i])
+                        a += (x - xPrime).L2Norm() / (clusters[i].Count - 1);
+
+                    double[] bs = new double[clusters.Length];
+                    for (int j = 0; j < clusters.Length; ++j) {
+                        if (i == j) {
+                            bs[j] = double.MaxValue;
+                            continue;
+                        }
+                        bs[j] = 0;
+                        foreach (var xPrime in clusters[j]) {
+                            bs[j] += (x-xPrime).L2Norm() / clusters[j].Count;
+                        }
+                    }
+                    double b = bs.Min();
+                    result += (b - a) / (a > b ? a : b) / dataCount;
+                }
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// 利用轮廓系数度量，自动选择一个较优的簇划分数目（即 k 值），使用 k 均值算法进行聚类
+        /// </summary>
+        /// <param name="data">样本集</param>
+        /// <param name="threshold">在计算新均值向量的环节中，每个均值向量移动的距离之和小于何值，则停止</param>
+        /// <returns>包含 k 个簇的簇划分</returns>
+        public static List<Vector<double>>[] KMeans(List<Vector<double>> data, double threshold) {
+            List<Vector<double>>[] formerClusters = Array.Empty<List<Vector<double>>>(), clusters;
+            double formerSC = -1;
+            for (int k = 2; ; ++k) {
+                var t = KMeansGetClustersAndMeans(data, k, threshold);
+                clusters = t.Item1;
+                var means = t.Item2;
+                double sc = SilhouetteCoefficient(clusters, means);
+                if (sc > formerSC) {
+                    formerSC = sc;
+                    formerClusters = clusters;
+                } else {
+                    return formerClusters;
+                }
+            }
+        }
+
     }
 }

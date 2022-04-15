@@ -34,4 +34,5 @@ for (int i = 0; i < Ch7.defaultData3.Count; ++i) {
 }
 */
 
-var c = Ch9.KMeans(Ch9.defaultData4, 3, 0.001);
+var c = Ch9.KMeans(Ch9.defaultData4, 0.001);
+int a = 0;
