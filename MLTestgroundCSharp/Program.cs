@@ -1,5 +1,6 @@
 using MLEx;
 using MathNet.Numerics.LinearAlgebra;
+using Newtonsoft.Json;
 
 /*
 Ch4.Node root = Ch4.TreeGenerate(Ch4.defaultData2Train, Ch4.defaultAttrSet2, Ch4.PurityAlgorithm.Gini);
@@ -34,5 +35,20 @@ for (int i = 0; i < Ch7.defaultData3.Count; ++i) {
 }
 */
 
-var c = Ch9.KMeans(Ch9.defaultData4, 0.001);
-int a = 0;
+
+for (int i = 0; i < 10; i++) {
+    var c = Ch9.KMeans(Ch9.defaultData4, 0.001);
+    var json = JsonConvert.SerializeObject(c);
+    File.WriteAllText("./plot.txt", json);
+    System.Diagnostics.Process p = new System.Diagnostics.Process();
+    p.StartInfo.FileName = "python";
+    p.StartInfo.Arguments = "./ClustersPlot.py ./plot.txt";
+    p.StartInfo.UseShellExecute = false;
+    p.StartInfo.RedirectStandardInput = true;
+    p.StartInfo.RedirectStandardOutput = true;
+    p.StartInfo.RedirectStandardError = true;
+    p.StartInfo.CreateNoWindow = false;
+    p.Start();
+    p.WaitForExit();
+    p.Close();
+}
